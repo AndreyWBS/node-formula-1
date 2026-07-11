@@ -1,10 +1,55 @@
 import fastify from "fastify";
 import cors from "@fastify/cors";
+import swagger from "@fastify/swagger";
+import swaggerUI from "@fastify/swagger-ui";
+import scalarApiReference from "@scalar/fastify-api-reference";
 
-const server = fastify({ logger: true });
+const port = Number(process.env.PORT) || 3333;
+const isProduction = process.env.NODE_ENV === "production";
+
+const server = fastify({
+  logger: {
+    level: process.env.LOG_LEVEL ?? "info",
+    transport: isProduction
+      ? undefined
+      : {
+          target: "pino-pretty",
+          options: {
+            translateTime: "HH:MM:ss Z",
+            ignore: "pid,hostname",
+          },
+        },
+  },
+});
 
 server.register(cors, {
   origin: "*",
+});
+
+server.register(swagger, {
+  openapi: {
+    openapi: "3.0.0",
+    info: {
+      title: "Formula 1 API",
+      description: "API com dados de equipes e pilotos da Formula 1",
+      version: "1.0.0",
+    },
+    servers: [{ url: `http://localhost:${port}` }],
+    tags: [
+      { name: "teams", description: "Endpoints de equipes" },
+      { name: "drivers", description: "Endpoints de pilotos" },
+    ],
+  },
+});
+
+// Swagger UI: http://localhost:3333/docs
+server.register(swaggerUI, {
+  routePrefix: "/docs",
+});
+
+// Scalar UI: http://localhost:3333/reference
+server.register(scalarApiReference, {
+  routePrefix: "/reference",
 });
 
 const teams = [
@@ -28,15 +73,63 @@ const drivers = [
   { id: 2, name: "Lando Norris", team: "McLaren" },
 ];
 
-server.get("/teams", async (request, response) => {
-  response.type("application/json").code(200);
-  return { teams };
-});
+const teamSchema = {
+  type: "object",
+  properties: {
+    id: { type: "number" },
+    name: { type: "string" },
+    base: { type: "string" },
+  },
+};
 
-server.get("/drivers", async (request, response) => {
-  response.type("application/json").code(200);
-  return { drivers };
-});
+const driverSchema = {
+  type: "object",
+  properties: {
+    id: { type: "number" },
+    name: { type: "string" },
+    team: { type: "string" },
+  },
+};
+
+server.get(
+  "/teams",
+  {
+    schema: {
+      tags: ["teams"],
+      summary: "Lista todas as equipes",
+      response: {
+        200: {
+          type: "object",
+          properties: { teams: { type: "array", items: teamSchema } },
+        },
+      },
+    },
+  },
+  async (request, response) => {
+    response.type("application/json").code(200);
+    return { teams };
+  }
+);
+
+server.get(
+  "/drivers",
+  {
+    schema: {
+      tags: ["drivers"],
+      summary: "Lista todos os pilotos",
+      response: {
+        200: {
+          type: "object",
+          properties: { drivers: { type: "array", items: driverSchema } },
+        },
+      },
+    },
+  },
+  async (request, response) => {
+    response.type("application/json").code(200);
+    return { drivers };
+  }
+);
 
 interface DriverParams {
   id: string;
@@ -44,6 +137,26 @@ interface DriverParams {
 
 server.get<{ Params: DriverParams }>(
   "/drivers/:id",
+  {
+    schema: {
+      tags: ["drivers"],
+      summary: "Busca um piloto pelo id",
+      params: {
+        type: "object",
+        properties: { id: { type: "string" } },
+      },
+      response: {
+        200: {
+          type: "object",
+          properties: { driver: driverSchema },
+        },
+        404: {
+          type: "object",
+          properties: { message: { type: "string" } },
+        },
+      },
+    },
+  },
   async (request, response) => {
     const id = parseInt(request.params.id);
     const driver = drivers.find((d) => d.id === id);
@@ -58,6 +171,7 @@ server.get<{ Params: DriverParams }>(
   }
 );
 
-server.listen({ port: 3333 }, () => {
-  console.log("Server init");
+server.listen({ port }, () => {
+  server.log.info(`Docs (Swagger UI) available at /docs`);
+  server.log.info(`Docs (Scalar) available at /reference`);
 });
